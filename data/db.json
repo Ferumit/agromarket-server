@@ -1,0 +1,16 @@
+{
+  "products": [
+    { "id": 1, "name": "Картофель", "category": "Овощи", "price": 350, "unit": "кг", "image": "https://placehold.co/300x200?text=Potato" },
+    { "id": 2, "name": "Мёд натуральный", "category": "Мёд", "price": 4500, "unit": "кг", "image": "https://placehold.co/300x200?text=Honey" },
+    { "id": 3, "name": "Молоко фермерское", "category": "Молочная продукция", "price": 600, "unit": "л", "image": "https://placehold.co/300x200?text=Milk" },
+    { "id": 4, "name": "Яблоки Апорт", "category": "Фрукты", "price": 900, "unit": "кг", "image": "https://placehold.co/300x200?text=Apples" },
+    { "id": 5, "name": "Морковь столовая", "category": "Овощи", "price": 250, "unit": "кг", "image": "https://placehold.co/300x200?text=Carrot" },
+    { "id": 6, "name": "Творог домашний", "category": "Молочная продукция", "price": 1800, "unit": "кг", "image": "https://placehold.co/300x200?text=Cottage+cheese" },
+    { "id": 7, "name": "Сыворотка молочная", "category": "Молочная продукция", "price": 300, "unit": "л", "image": "https://placehold.co/300x200?text=Whey" },
+    { "id": 8, "name": "Мёд гречишный", "category": "Мёд", "price": 5500, "unit": "кг", "image": "https://placehold.co/300x200?text=Buckwheat+honey" },
+    { "id": 9, "name": "Яйца куриные С1", "category": "Птица и яйца", "price": 1100, "unit": "дес.", "image": "https://placehold.co/300x200?text=Eggs" },
+    { "id": 10, "name": "Пшеница продовольственная", "category": "Зерно", "price": 140, "unit": "кг", "image": "https://placehold.co/300x200?text=Wheat" },
+    { "id": 11, "name": "Лук репчатый", "category": "Овощи", "price": 200, "unit": "кг", "image": "https://placehold.co/300x200?text=Onion" },
+    { "id": 12, "name": "Масло сливочное", "category": "Молочная продукция", "price": 5200, "unit": "кг", "image": "https://placehold.co/300x200?text=Butter" }
+  ]
+}
