@@ -1,7 +1,8 @@
 # АгроМаркет API
 
-Backend «АгроМаркета» на Node.js + Express + PostgreSQL: каталог товаров с полным CRUD
-и оптовые заявки из React-формы. Учебный проект по дисциплине «Fullstack-разработка», лабораторные 5–6.
+Backend «АгроМаркета» на Node.js + Express + PostgreSQL: каталог товаров с полным CRUD,
+оптовые заявки из React-формы, пользователи и вход по JWT. Учебный проект по дисциплине
+«Fullstack-разработка», лабораторные 5–7.
 
 Связанные репозитории: [agromarket-react](https://github.com/Ferumit/agromarket-react) — frontend,
 [agromarket](https://github.com/Ferumit/agromarket) — исходный `db.json` (лаб. 1–2).
@@ -17,23 +18,44 @@ Backend «АгроМаркета» на Node.js + Express + PostgreSQL: ката
 Команды запускаются **из папки `agromarket-server`**, иначе не найдутся `db/schema.sql` и `data/db.json` (ENOENT).
 Нужен Node.js 18.11+ (режим `node --watch`).
 
-`.env` в Git не попадает (`.gitignore`), в репозитории только `.env.example` без настоящего пароля.
+`.env` в Git не попадает (`.gitignore`), в репозитории только `.env.example` без настоящих значений.
+
+## Переменные окружения (.env)
+
+| Переменная | Значение |
+|------------|----------|
+| `PORT` | порт API, по умолчанию 3000 |
+| `DATABASE_URL` | `postgresql://postgres:ПАРОЛЬ@localhost:5432/agromarket` |
+| `CORS_ORIGIN` | адрес frontend, `http://localhost:5173` (без `/` в конце) |
+| `JWT_SECRET` | случайная строка 64 символа: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `JWT_EXPIRES_IN` | срок жизни токена, например `2h` |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | администратор, создаётся командой `npm run db:init` |
+
+Без `JWT_SECRET` сервер не стартует: «Не задан JWT_SECRET в .env».
 
 ## Эндпоинты
 
-| Метод  | Путь              | Описание                                         | Ответы        |
-|--------|-------------------|--------------------------------------------------|---------------|
-| GET    | /api/health       | сервер и связь с БД                              | 200           |
-| GET    | /api/about        | name, version, author                            | 200           |
-| GET    | /api/products     | товары, `?search=` `?maxPrice=` `?sort=` `?limit=` `?offset=` | 200, 400 |
-| GET    | /api/products/:id | один товар                                       | 200, 400, 404 |
-| POST   | /api/products     | создать товар                                    | 201, 400      |
-| PUT    | /api/products/:id | изменить товар целиком                           | 200, 400, 404 |
-| DELETE | /api/products/:id | удалить товар                                    | 204, 404      |
-| GET    | /api/orders       | заявки + название товара, `?status=`             | 200           |
-| POST   | /api/orders       | новая заявка                                     | 201, 400      |
-| PATCH  | /api/orders/:id   | сменить статус заявки                            | 200, 400, 404 |
-| *      | любой другой адрес | JSON-ошибка «Маршрут … не найден»               | 404           |
+| Метод  | Путь               | Описание                                   | Доступ | Ответы                  |
+|--------|--------------------|--------------------------------------------|--------|-------------------------|
+| GET    | /api/health        | сервер и связь с БД                        | все    | 200                     |
+| GET    | /api/about         | name, version, author                      | все    | 200                     |
+| POST   | /api/auth/register | регистрация `{ name, email, password }`    | все    | 201, 400, 409           |
+| POST   | /api/auth/login    | вход `{ email, password }` → `{ user, token }` | все | 200, 400, 401, 429      |
+| GET    | /api/auth/me       | текущий пользователь                       | токен  | 200, 401                |
+| PATCH  | /api/auth/password | смена пароля `{ oldPassword, newPassword }` | токен | 204, 400, 401           |
+| GET    | /api/products      | товары, `?search=` `?maxPrice=` `?sort=` `?limit=` `?offset=` | все | 200, 400   |
+| GET    | /api/products/:id  | один товар                                 | все    | 200, 400, 404           |
+| POST   | /api/products      | создать товар                              | admin  | 201, 400, 401, 403      |
+| PUT    | /api/products/:id  | изменить товар целиком                     | admin  | 200, 400, 401, 403, 404 |
+| DELETE | /api/products/:id  | удалить товар                              | admin  | 204, 401, 403, 404      |
+| GET    | /api/orders        | заявки + название товара, `?status=`       | admin  | 200, 401, 403           |
+| GET    | /api/orders/my     | заявки текущего пользователя               | токен  | 200, 401                |
+| POST   | /api/orders        | новая заявка (с токеном — привязывается к пользователю) | все | 201, 400   |
+| PATCH  | /api/orders/:id    | сменить статус заявки                      | admin  | 200, 400, 401, 403, 404 |
+| *      | любой другой адрес | JSON-ошибка «Маршрут … не найден»          | все    | 404                     |
+
+Токен передаётся в заголовке `Authorization: Bearer <токен>`. Ошибки тела запроса: битый JSON → 400,
+тело больше 10 КБ → 413.
 
 Параметры `GET /api/products` можно сочетать:
 
@@ -57,6 +79,9 @@ Backend «АгроМаркета» на Node.js + Express + PostgreSQL: ката
 
 Тесты: коллекция [postman/agromarket.postman_collection.json](postman/agromarket.postman_collection.json)
 (Postman → Import → Run collection). Без Postman: `npx newman run postman/agromarket.postman_collection.json`.
+Переменные коллекции `adminEmail` / `adminPassword` должны совпадать с `ADMIN_EMAIL` / `ADMIN_PASSWORD` из `.env`
+(в файле — учебный пароль `Admin12345`; в реальном проекте секреты держат в Environment Postman и не экспортируют).
+Перед прогоном — свежий сервер: лимит неудачных входов хранится в памяти процесса.
 
 ## Структура
 
@@ -71,8 +96,10 @@ agromarket-server/
 ├── middleware/
 │   ├── logger.js           ← лог запросов: GET /api/products -> 200 (2 мс)
 │   ├── validateOrder.js    ← проверка заявки (middleware на уровне маршрута)
-│   └── errorHandler.js     ← ошибки БД -> 400, остальное -> 500
+│   ├── auth.js             ← requireAuth, requireRole, optionalAuth
+│   └── errorHandler.js     ← ошибки БД -> 400/409, битый JSON -> 400, большое тело -> 413, остальное -> 500
 ├── routes/
+│   ├── auth.js             ← /api/auth: регистрация, вход, me, смена пароля
 │   ├── products.js         ← CRUD /api/products
 │   └── orders.js           ← /api/orders
 ├── postman/                ← коллекция с автотестами
@@ -81,7 +108,90 @@ agromarket-server/
 └── package.json
 ```
 
-Конвейер: `cors()` → `express.json()` → `logger` → роутеры → обработчик 404 → `errorHandler`.
+Конвейер: `helmet()` → `cors()` → `express.json({ limit: '10kb' })` → `logger` → роутеры
+→ обработчик 404 → `errorHandler`.
+
+## Лабораторная 7 — ответы
+
+Всё проверено на запущенном сервере (curl, Postman/newman, React в Chromium).
+
+- **bcrypt (hash-demo.js):** два хэша одного пароля `qwerty123` разные (`$2b$10$2LkPPO8C…` и `$2b$10$m.4YcSuJ…`),
+  `compare` с верным паролем → `true`, с неверным → `false`; один хэш с cost 10 — 86 мс, с cost 14 — 1,4 с.
+- **Регистрация** `Aigerim@Mail.kz` → 201, в ответе `user` и `token`, поля `password_hash` нет,
+  e-mail сохранён как `aigerim@mail.kz`. Повтор → **409** «Такая запись уже существует» (UNIQUE, код 23505).
+  Пароль `123` → 400 «Пароль должен быть не короче 8 символов».
+- **Одинаковые ли хэши у двух пользователей с одним паролем:** нет — у aigerim, hacker и erlan пароль
+  `qwerty123`, а хэши разные (`$2b$10$15xv8Z6P…`, `$2b$10$PALEQO45…`, `$2b$10$zaEc504X…`): bcrypt добавляет
+  к каждому паролю случайную соль и хранит её внутри хэша.
+- **Регистрация с `"role": "admin"`:** в ответе `"role": "user"`. Код роль из тела не читает,
+  в INSERT её нет — база ставит `DEFAULT 'user'` (защита от mass assignment).
+- **Вход:** неверный пароль и несуществующий e-mail дают одинаковый ответ 401 «Неверный email или пароль».
+  Токен из трёх частей; заголовок `{"alg":"HS256","typ":"JWT"}`, данные `{"sub":"1","role":"admin","iat":…,"exp":…}`,
+  `exp − iat = 7200` с — это `JWT_EXPIRES_IN=2h`.
+- **Короткий токен (30s):** сразу после входа `/api/auth/me` → 200, через 31 секунду → 401
+  «Срок действия токена истёк, войдите снова».
+- **Защита маршрутов:** `/auth/me` без токена → 401, с токеном Айгерим → 200; `POST /products` без токена → 401,
+  от Айгерим → **403** «Недостаточно прав», от администратора → 201; `GET /orders` от Айгерим → 403;
+  `GET /products` без токена → 200.
+- **Почему подделанный на jwt.io токен не прошёл:** после замены `"role": "user"` на `"admin"` → 401
+  «Недействительный токен». Подпись — это HMAC-SHA256 от заголовка и данных, посчитанный с `JWT_SECRET`.
+  Данные поменялись, а подпись осталась старой; посчитать новую без секретного ключа нельзя,
+  поэтому `jwt.verify` видит несовпадение.
+- **Что произошло после порчи токена в localStorage:** при загрузке страницы React запросил `/api/auth/me`,
+  сервер ответил 401, и `apiFetch` (`src/api.js`) удалил `token` и `user` из localStorage
+  и перезагрузил страницу — снова видна форма входа.
+- **Почему спрятать кнопку в React недостаточно:** обычный пользователь выполнил в Console
+  `POST /api/products` со своим токеном и получил **403** «Недостаточно прав». Интерфейс — только удобство:
+  любой может отправить запрос из Console, curl или Postman. Настоящая защита — на сервере,
+  в `requireAuth` и `requireRole('admin')`.
+- **Битый JSON** `{"email": "a@a.kz",` — до изменения errorHandler был **500** «Внутренняя ошибка сервера»,
+  теперь **400** «Некорректный JSON в теле запроса». Тело больше 10 КБ → 413.
+- **6 неудачных входов подряд:** попытки 1–5 → 401, 6-я → **429** «Слишком много попыток входа…».
+  В ответе заголовки `RateLimit: "5-in-15min"; r=0; t=899`, `RateLimit-Policy: "5-in-15min"; q=5; w=900`, `Retry-After: 899`.
+- **Preflight OPTIONS** перед `POST /api/products` с токеном → 204 и заголовки
+  `Access-Control-Allow-Origin: http://localhost:5173`, `Access-Control-Allow-Methods: GET,HEAD,PUT,PATCH,POST,DELETE`,
+  `Access-Control-Allow-Headers: authorization,content-type`. В логе сервера его нет: `cors()` стоит выше логгера
+  и отвечает сам.
+- **helmet** добавил `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`.
+- **Postman:** коллекция из 15 запросов (вход администратора, регистрация, проверки 401 и 403), 24 проверки,
+  0 ошибок; второй прогон подряд тоже зелёный.
+- **Использовал(а) ли ИИ и для чего:** да, Claude Code (ИИ-ассистент) помог написать код сервера и React,
+  коллекцию и этот README по тексту лабораторной. Результаты выше получены запуском.
+
+### Бонус (выполнен)
+
+- `optionalAuth` на `POST /api/orders`: заявка вошедшего пользователя сохраняется с `user_id`;
+  `GET /api/orders/my` — его заявки (маршрут объявлен до `/:id`);
+- смена пароля `PATCH /api/auth/password` (проверка старого через `bcrypt.compare`, сохраняется хэш нового);
+- в React: кнопка «Удалить» у товаров для администратора (с `confirm`) и панель заявок с выбором статуса.
+
+### Вопросы для защиты — шпаргалка
+
+1. **Аутентификация и авторизация.** Аутентификация — «кто вы?» (вход, проверка токена), ошибка — **401**.
+   Авторизация — «что вам можно?» (роль), ошибка — **403**.
+2. **Хэш, соль, медленный bcrypt.** Хэш — односторонняя функция: из пароля получить легко, обратно нельзя.
+   Шифрование обратимо — утечёт ключ, утекут все пароли. Соль — случайная добавка к каждому паролю,
+   из-за неё одинаковые пароли дают разные хэши и не работают готовые таблицы «пароль → хэш».
+   bcrypt медленный специально: пользователь не заметит 0,1 с, а перебор миллиардов вариантов займёт годы.
+3. **Три части JWT.** Заголовок (алгоритм), данные (`sub`, `role`, `iat`, `exp`), подпись.
+   Заголовок и данные — просто Base64URL, их может прочитать любой, у кого есть токен.
+4. **Подделка.** Подпись считается от заголовка и данных с `JWT_SECRET`; изменил `role` — подпись не сходится,
+   а новую без ключа не посчитать. Если `JWT_SECRET` утечёт, злоумышленник выпустит токен администратора
+   сам — ключ нужно сменить (все старые токены станут недействительны).
+5. **requireAuth и requireRole.** `requireAuth` достаёт токен из `Authorization: Bearer …`, проверяет `jwt.verify`
+   и кладёт `req.user`. `requireRole('admin')` сравнивает `req.user.role`. Это функция, возвращающая middleware,
+   чтобы одну проверку можно было настроить на разные роли.
+6. **Одно сообщение при неверном входе** — чтобы нельзя было перебором узнать, какие e-mail зарегистрированы.
+7. **Mass assignment** — когда сервер сохраняет все поля из запроса, и клиент присылает лишнее (`"role": "admin"`).
+   Защита в `routes/auth.js`: из тела читаем только `name, email, password`, роль ставит `DEFAULT` базы.
+8. **Токен в React.** Хранится в localStorage (`token`, `user`), `apiFetch` добавляет `Authorization: Bearer …`
+   к каждому запросу, «Выйти» удаляет оба ключа. Недостаток: localStorage читает любой JavaScript на странице —
+   при XSS токен украдут; надёжнее httpOnly-cookie.
+9. **Спрятанная форма** — только интерфейс: запрос можно отправить из Console/Postman. Проверка — на сервере.
+10. **Preflight OPTIONS.** Запрос с `Authorization` или `Content-Type: application/json` на другой origin браузер
+    считает «непростым» и сначала спрашивает разрешение OPTIONS-запросом. Появился сейчас, потому что
+    к запросам добавился заголовок `Authorization`.
 
 ## Лабораторная 6 — ответы
 

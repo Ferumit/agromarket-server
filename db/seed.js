@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
+import bcrypt from 'bcryptjs';
 import { pool } from './pool.js';
 
 const schema = readFileSync('./db/schema.sql', 'utf-8');
@@ -15,5 +16,15 @@ for (const p of products) { // 2. переносим товары из db.json (
   );
 }
 
-console.log(`Готово: таблицы созданы, товаров добавлено — ${products.length}`);
-await pool.end(); // 3. закрываем соединения, иначе скрипт не завершится
+// 3. Администратор: email и пароль берём из .env, в базу кладём только хэш
+const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10);
+await pool.query(
+  `INSERT INTO users (name, email, password_hash, role)
+   VALUES ($1, $2, $3, 'admin')`,
+  ['Администратор', process.env.ADMIN_EMAIL, hash]
+);
+
+console.log(
+  `Готово: товаров — ${products.length}, админ — ${process.env.ADMIN_EMAIL}`
+);
+await pool.end(); // 4. закрываем соединения, иначе скрипт не завершится
