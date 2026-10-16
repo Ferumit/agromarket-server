@@ -1,8 +1,10 @@
+![CI](https://github.com/Ferumit/agromarket-server/actions/workflows/ci.yml/badge.svg)
+
 # АгроМаркет API
 
 Backend «АгроМаркета» на Node.js + Express + PostgreSQL: каталог товаров с полным CRUD,
 оптовые заявки из React-формы, пользователи и вход по JWT. Учебный проект по дисциплине
-«Fullstack-разработка», лабораторные 5–7.
+«Fullstack-разработка», лабораторные 5–8.
 
 Связанные репозитории: [agromarket-react](https://github.com/Ferumit/agromarket-react) — frontend,
 [agromarket](https://github.com/Ferumit/agromarket) — исходный `db.json` (лаб. 1–2).
@@ -19,6 +21,31 @@ Backend «АгроМаркета» на Node.js + Express + PostgreSQL: ката
 Нужен Node.js 18.11+ (режим `node --watch`).
 
 `.env` в Git не попадает (`.gitignore`), в репозитории только `.env.example` без настоящих значений.
+
+## Тестирование
+
+1. Создать базу `agromarket_test` (pgAdmin или `psql -U postgres -c "CREATE DATABASE agromarket_test;"`)
+2. Скопировать `.env` в `.env.test` и указать в нём тестовую базу (в имени обязательно `test`)
+3. `npm test` — все тесты, `npm run test:watch` — режим наблюдения,
+   `npm run coverage` — отчёт о покрытии (сейчас: Lines 66.46%)
+
+Тесты — Vitest + Supertest, Node.js 22+. Перед запуском `tests/globalSetup.js` проверяет, что в адресе базы есть
+слово `test`, и выполняет `npm run db:init`, поэтому рабочая база не страдает. В CI (GitHub Actions) PostgreSQL 16
+поднимается в контейнере, переменные окружения заданы в `.github/workflows/ci.yml`.
+
+| Файл | Что проверяет | Тип |
+|------|---------------|-----|
+| `tests/health.test.js` | `/api/health` отвечает 200 | интеграционный |
+| `tests/products.test.js` | каталог: список, поля товара, 404, товар по id | интеграционный |
+| `tests/auth.test.js` | регистрация, mass assignment, 409, короткий пароль, e-mail в нижнем регистре, вход, `/auth/me` | интеграционный |
+| `tests/access.test.js` | права: 401 / 403 / чужая подпись, CRUD админа, 404 и 400 при изменении, доступ к заявкам | интеграционный |
+| `tests/middleware.test.js` | `requireRole`, `requireAuth` (нет заголовка, верный и истёкший токен) на mock-объектах | unit |
+
+## Правила работы с Git
+
+- Ветка `main` защищена: изменения — только через Pull Request
+- PR сливается после зелёного CI и одобрения ревьюера
+- Ветки: `feature/...`, `fix/...`; коммиты: feat, fix, test, refactor, docs, ci, chore
 
 ## Переменные окружения (.env)
 
@@ -103,13 +130,39 @@ agromarket-server/
 │   ├── products.js         ← CRUD /api/products
 │   └── orders.js           ← /api/orders
 ├── postman/                ← коллекция с автотестами
+├── tests/                  ← Vitest + Supertest (ЛР8)
+├── .github/workflows/ci.yml ← CI: тесты с PostgreSQL на каждый push в main и PR
 ├── .env.example
-├── server.js               ← только сборка приложения
+├── app.js                  ← приложение: middleware и маршруты, export default app
+├── server.js               ← .env, проверка JWT_SECRET, app.listen()
+├── vitest.config.js        ← .env.test, globalSetup, покрытие
 └── package.json
 ```
 
 Конвейер: `helmet()` → `cors()` → `express.json({ limit: '10kb' })` → `logger` → роутеры
 → обработчик 404 → `errorHandler`.
+
+## Лабораторная 8 — ответы
+
+- **Какие тесты упали, когда убрали adminOnly у POST, и почему:** упали 3 теста из `tests/access.test.js` —
+  «без токена — 401», «покупатель — 403» и «токен, подписанный чужим ключом, — 401»:
+  `AssertionError: expected 201 to be 401` (и `to be 403`). Без `requireAuth` и `requireRole('admin')` маршрут
+  создаёт товар для любого запроса и отвечает 201. Сервер при этом запускается, каталог работает — ошибку видно
+  только по тестам. Вернули `adminOnly` — снова 29 из 29.
+- **Покрытие (Lines) и одна непокрытая строка — почему её не проверяет ни один тест:** Lines 65.26%. В
+  `routes/products.js` не была покрыта строка 91 — ответ 404 у `PUT /api/products/:id`: тесты меняли только
+  существующий товар, поэтому `UPDATE` всегда находил строку и до `if (rows.length === 0)` дело не доходило.
+  Добавил тест «админ: изменить несуществующий товар — 404» (и «отрицательная цена — 400» для строки 14) —
+  стало 66.46%. `logger.js` — 0% не из-за ошибки: в `app.js` он подключается только при `NODE_ENV !== 'test'`,
+  так задумано. Непокрыты остались, например, `routes/orders.js` (создание заявки и смена статуса).
+- **Чем наш unit-тест requireRole отличается от интеграционного теста в access.test.js:** unit-тест вызывает одну
+  функцию `requireRole('admin')(req, res, next)` с поддельными `req`/`res` (`vi.fn()`), без Express и базы, и
+  проверяет, вызван ли `next` или `res.status(403)`. Интеграционный тест отправляет HTTP-запрос через Supertest:
+  он проходит `helmet` → `express.json` → `requireAuth` → `requireRole` → маршрут → PostgreSQL.
+- **Какие замечания я получил(а) на code-review и что исправил(а):** _заполнить после ревью напарника_
+- **Какие замечания я оставил(а) напарнику:** _заполнить после ревью PR напарника_
+- **Использовал(а) ли ИИ и для чего:** да, Claude Code (ИИ-ассистент) — по тексту лабораторной написал тесты,
+  `app.js`/`server.js`, конфигурацию Vitest и CI, этот README; запустил тесты и эксперименты, результаты выше — с запуска.
 
 ## Лабораторная 7 — ответы
 
