@@ -61,6 +61,22 @@ describe('Изменение каталога: только admin', () => {
     expect(gone.status).toBe(404);
   });
 
+  it('админ: изменить несуществующий товар — 404', async () => {
+    const res = await request(app)
+      .put('/api/products/999999')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(newProduct);
+    expect(res.status).toBe(404);
+  });
+
+  it('админ: отрицательная цена — 400', async () => {
+    const res = await request(app)
+      .post('/api/products')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ ...newProduct, price: -5 });
+    expect(res.status).toBe(400);
+  });
+
   it('покупатель не может удалить товар — 403', async () => {
     const res = await request(app)
       .delete('/api/products/1')
