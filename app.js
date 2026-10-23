@@ -7,6 +7,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import authRouter from './routes/auth.js';
 import productsRouter from './routes/products.js';
 import ordersRouter from './routes/orders.js';
+import categoriesRouter from './routes/categories.js';
 
 // Приложение БЕЗ запуска сервера: его импортируют server.js и тесты (Supertest)
 const app = express();
@@ -64,6 +65,7 @@ app.get('/api/about', (req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/categories', categoriesRouter);
 
 // Сюда доходят только запросы, которые не обработал ни один маршрут
 app.use((req, res) => {
