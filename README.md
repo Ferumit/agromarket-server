@@ -4,21 +4,65 @@
 
 Backend «АгроМаркета» на Node.js + Express + PostgreSQL: каталог товаров с полным CRUD,
 оптовые заявки из React-формы, пользователи и вход по JWT. Учебный проект по дисциплине
-«Fullstack-разработка», лабораторные 5–8.
+«Fullstack-разработка», лабораторные 5–9.
 
 Связанные репозитории: [agromarket-react](https://github.com/Ferumit/agromarket-react) — frontend,
 [agromarket](https://github.com/Ferumit/agromarket) — исходный `db.json` (лаб. 1–2).
+
+## Продакшен
+
+- Сайт: https://agromarket-ferumit.vercel.app
+- API: https://agromarket-api-ferumit.onrender.com/api/health
+- Схема: React (Vercel) → Express (Render, Frankfurt) → PostgreSQL (Neon, Frankfurt)
+
+### Переменные окружения (значения — только в панелях сервисов)
+
+| Переменная | Где задана | Секрет |
+|---|---|---|
+| DATABASE_URL | Render | да |
+| JWT_SECRET | Render | да |
+| CORS_ORIGIN | Render | нет |
+| NODE_ENV, JWT_EXPIRES_IN | Render | нет |
+| VITE_API_URL | Vercel | нет |
+| RENDER_DEPLOY_HOOK_URL | GitHub Secrets | да |
+| API_URL, FRONTEND_URL | GitHub Variables | нет |
+
+`PORT` задаёт сам Render (10000). `ADMIN_EMAIL` / `ADMIN_PASSWORD` на Render не нужны: администратор создан
+при первом заполнении базы, а `db:migrate` без них этот шаг пропускает.
+
+### Как происходит деплой
+1. Изменения — только через Pull Request: CI + ревью
+2. Merge в main → CI: test → deploy (Render deploy hook, ref = SHA) → smoke (`scripts/smoke.js`)
+3. React собирается Vercel из main автоматически, для каждого PR — отдельная Preview-версия
+4. Авария: Rollback на Render, затем git revert через PR
+
+Render: Build `npm ci --omit=dev`, Start `npm run db:migrate && npm start`, Health Check Path `/api/health`
+(трафик переходит на новую версию, только когда она ответила 200), Auto-Deploy — Off (деплоем управляет CI).
+
+Облачная база заполняется один раз с ноутбука (строка Neon — в `.env.neon`, он закрыт `.gitignore`):
+
+```
+node --env-file=.env.neon db/seed.js           # предохранитель откажет
+node --env-file=.env.neon db/seed.js --force   # только на пустой базе!
+node --env-file=.env.neon db/migrate.js
+```
+
+Smoke-тест вручную: `node --env-file=.env.smoke scripts/smoke.js` (`API_URL`, `FRONTEND_URL`, по желанию
+`EXPECTED_VERSION`). Postman: окружение [postman/agromarket.production.postman_environment.json](postman/agromarket.production.postman_environment.json)
+(пароль администратора вписывается локально). Всю коллекцию на продакшене не запускать — она создаёт и удаляет товары.
 
 ## Запуск
 
 1. Установить PostgreSQL 16/17, создать базу `agromarket` (pgAdmin или `psql -U postgres -c "CREATE DATABASE agromarket;"`).
 2. Скопировать `.env.example` в `.env` и указать свой пароль пользователя `postgres`.
 3. `npm install`
-4. `npm run db:init` — создать таблицы по `db/schema.sql` и загрузить товары из `data/db.json`.
+4. `npm run db:init` — создать таблицы по `db/schema.sql` и загрузить товары из `data/db.json`
+   (удаляет все таблицы! На не-локальной базе откажется без `--force`).
+   `npm run db:migrate` — безопасно: создаёт только недостающие таблицы, данные не трогает.
 5. `npm run dev` — http://localhost:3000
 
 Команды запускаются **из папки `agromarket-server`**, иначе не найдутся `db/schema.sql` и `data/db.json` (ENOENT).
-Нужен Node.js 18.11+ (режим `node --watch`).
+Нужен Node.js 22+ (`engines` в `package.json`).
 
 `.env` в Git не попадает (`.gitignore`), в репозитории только `.env.example` без настоящих значений.
 
@@ -27,19 +71,21 @@ Backend «АгроМаркета» на Node.js + Express + PostgreSQL: ката
 1. Создать базу `agromarket_test` (pgAdmin или `psql -U postgres -c "CREATE DATABASE agromarket_test;"`)
 2. Скопировать `.env` в `.env.test` и указать в нём тестовую базу (в имени обязательно `test`)
 3. `npm test` — все тесты, `npm run test:watch` — режим наблюдения,
-   `npm run coverage` — отчёт о покрытии (сейчас: Lines 66.46%)
+   `npm run coverage` — отчёт о покрытии (сейчас: Lines 69.94%)
 
 Тесты — Vitest + Supertest, Node.js 22+. Перед запуском `tests/globalSetup.js` проверяет, что в адресе базы есть
-слово `test`, и выполняет `npm run db:init`, поэтому рабочая база не страдает. В CI (GitHub Actions) PostgreSQL 16
+слово `test`, и выполняет `npm run db:init` и `npm run db:migrate` (миграция поверх готовой базы
+не должна ничего ломать), поэтому рабочая база не страдает. В CI (GitHub Actions) PostgreSQL 16
 поднимается в контейнере, переменные окружения заданы в `.github/workflows/ci.yml`.
 
 | Файл | Что проверяет | Тип |
 |------|---------------|-----|
-| `tests/health.test.js` | `/api/health` отвечает 200 | интеграционный |
+| `tests/health.test.js` | `/api/health`: 200, `db: ok`, `version: local`; CORS: свой Origin получает заголовок, чужой — нет | интеграционный |
+| `tests/categories.test.js` | `/api/categories`: `count` — число, сумма равна числу товаров | интеграционный |
 | `tests/products.test.js` | каталог: список, поля товара, 404, товар по id | интеграционный |
 | `tests/auth.test.js` | регистрация, mass assignment, 409, короткий пароль, e-mail в нижнем регистре, вход, `/auth/me` | интеграционный |
 | `tests/access.test.js` | права: 401 / 403 / чужая подпись, CRUD админа, 404 и 400 при изменении, доступ к заявкам | интеграционный |
-| `tests/middleware.test.js` | `requireRole`, `requireAuth` (нет заголовка, верный и истёкший токен) на mock-объектах | unit |
+| `tests/middleware.test.js` | `requireRole`, `requireAuth` (нет заголовка, верный и истёкший токен), `errorHandler` (500 в production скрыт, 400 — свой текст) на mock-объектах | unit |
 
 ## Правила работы с Git
 
@@ -53,18 +99,19 @@ Backend «АгроМаркета» на Node.js + Express + PostgreSQL: ката
 |------------|----------|
 | `PORT` | порт API, по умолчанию 3000 |
 | `DATABASE_URL` | `postgresql://postgres:ПАРОЛЬ@localhost:5432/agromarket` |
-| `CORS_ORIGIN` | адрес frontend, `http://localhost:5173` (без `/` в конце) |
+| `CORS_ORIGIN` | адреса frontend через запятую, `http://localhost:5173` (без `/` в конце) |
+| `NODE_ENV` | `production` на Render: скрывает детали ошибок 5xx, требует `JWT_SECRET` от 32 символов |
 | `JWT_SECRET` | случайная строка 64 символа: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `JWT_EXPIRES_IN` | срок жизни токена, например `2h` |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | администратор, создаётся командой `npm run db:init` |
 
-Без `JWT_SECRET` сервер не стартует: «Не задан JWT_SECRET в .env».
+Без `DATABASE_URL`, `JWT_SECRET` или `CORS_ORIGIN` сервер не стартует: «Не заданы переменные окружения: …».
 
 ## Эндпоинты
 
 | Метод  | Путь               | Описание                                   | Доступ | Ответы                  |
 |--------|--------------------|--------------------------------------------|--------|-------------------------|
-| GET    | /api/health        | сервер и связь с БД                        | все    | 200                     |
+| GET    | /api/health        | сервер и связь с БД, `version` — SHA коммита | все  | 200, 503                |
 | GET    | /api/about         | name, version, author                      | все    | 200                     |
 | POST   | /api/auth/register | регистрация `{ name, email, password }`    | все    | 201, 400, 409           |
 | POST   | /api/auth/login    | вход `{ email, password }` → `{ user, token }` | все | 200, 400, 401, 429      |
@@ -75,6 +122,7 @@ Backend «АгроМаркета» на Node.js + Express + PostgreSQL: ката
 | POST   | /api/products      | создать товар                              | admin  | 201, 400, 401, 403      |
 | PUT    | /api/products/:id  | изменить товар целиком                     | admin  | 200, 400, 401, 403, 404 |
 | DELETE | /api/products/:id  | удалить товар                              | admin  | 204, 401, 403, 404      |
+| GET    | /api/categories    | категории и число товаров в каждой         | все    | 200                     |
 | GET    | /api/orders        | заявки + название товара, `?status=`       | admin  | 200, 401, 403           |
 | GET    | /api/orders/my     | заявки текущего пользователя               | токен  | 200, 401                |
 | POST   | /api/orders        | новая заявка (с токеном — привязывается к пользователю) | все | 201, 400   |
@@ -118,8 +166,9 @@ agromarket-server/
 │   └── db.json             ← источник начальных данных для seed
 ├── db/
 │   ├── schema.sql          ← таблицы products и orders
-│   ├── pool.js             ← пул соединений с PostgreSQL
-│   └── seed.js             ← npm run db:init: таблицы + товары
+│   ├── pool.js             ← пул соединений с PostgreSQL (+ обработчик обрыва)
+│   ├── seed.js             ← npm run db:init: таблицы + товары (с предохранителем --force)
+│   └── migrate.js          ← npm run db:migrate: CREATE TABLE IF NOT EXISTS (продакшен)
 ├── middleware/
 │   ├── logger.js           ← лог запросов: GET /api/products -> 200 (2 мс)
 │   ├── validateOrder.js    ← проверка заявки (middleware на уровне маршрута)
@@ -128,19 +177,145 @@ agromarket-server/
 ├── routes/
 │   ├── auth.js             ← /api/auth: регистрация, вход, me, смена пароля
 │   ├── products.js         ← CRUD /api/products
-│   └── orders.js           ← /api/orders
+│   ├── orders.js           ← /api/orders
+│   └── categories.js       ← /api/categories
 ├── postman/                ← коллекция с автотестами
+├── scripts/
+│   └── smoke.js            ← smoke-тест продакшена (ЛР9)
 ├── tests/                  ← Vitest + Supertest (ЛР8)
-├── .github/workflows/ci.yml ← CI: тесты с PostgreSQL на каждый push в main и PR
+├── .github/workflows/ci.yml ← CI: тесты на push и PR; после push в main — деплой на Render и smoke
 ├── .env.example
 ├── app.js                  ← приложение: middleware и маршруты, export default app
-├── server.js               ← .env, проверка JWT_SECRET, app.listen()
+├── server.js               ← .env, проверка переменных, app.listen(PORT), SIGTERM
 ├── vitest.config.js        ← .env.test, globalSetup, покрытие
 └── package.json
 ```
 
-Конвейер: `helmet()` → `cors()` → `express.json({ limit: '10kb' })` → `logger` → роутеры
+Конвейер: (`trust proxy`) `helmet()` → `cors()` → `express.json({ limit: '10kb' })` → `logger` → роутеры
 → обработчик 404 → `errorHandler`.
+
+## Лабораторная 9 — ответы
+
+- **Что напечатал предохранитель seed.js на облачной базе и зачем он нужен:**
+  `node --env-file=.env.neon db/seed.js` →
+  «Отказ: db:init запущен НЕ на локальной базе — все данные будут удалены.» и
+  «Если база пустая и вы уверены: node db/seed.js --force», код выхода 1. `db:init` начинается с `DROP TABLE`:
+  на базе с настоящими покупателями и заявками он стёр бы всё безвозвратно. Предохранитель пропускает только
+  `localhost`/`127.0.0.1` (локальная база и база CI), а облачную — только с явным `--force`, чтобы это нельзя было
+  сделать «по привычке». С `--force` на пустой базе: «Готово: товаров — 12, админ — admin@agromarket.kz»,
+  повторный `db/migrate.js` — «Миграция выполнена (инструкций: 3)», данные на месте. В Neon: 12 товаров,
+  один пользователь `admin@agromarket.kz` с ролью `admin`.
+- **Почему на Vercel сначала не загрузился каталог и как исправили:** на сайте «Не удалось загрузить товары»,
+  в консоли — `Access to fetch at 'https://agromarket-api-ferumit.onrender.com/api/products' from origin
+  'https://agromarket-ferumit.vercel.app' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header
+  is present on the requested resource.` В `CORS_ORIGIN` на Render был только `http://localhost:5173`, и сервер
+  не разрешал чужой Origin. Исправили: `CORS_ORIGIN=https://agromarket-ferumit.vercel.app,http://localhost:5173`
+  и деплой — ответ получил `access-control-allow-origin: https://agromarket-ferumit.vercel.app`, каталог загрузился.
+  Запрос `products` уходит на `https://agromarket-api-ferumit.onrender.com/api/products`, и этот адрес лежит прямо
+  в скачанном браузером `assets/index-….js` — Vite вписывает `VITE_`-переменные в код при сборке. Поэтому
+  в `VITE_` — никаких секретов. Прямой адрес `/несуществующий-путь` и F5 отдают ту же страницу React (200), а не
+  404 Vercel: это правило `rewrites` в `vercel.json`.
+- **Почему в PR job deploy — skipped; почему каталог не работает на Preview Vercel:** у `deploy` условие
+  `if: github.event_name == 'push' && github.ref == 'refs/heads/main'` — в Pull Request код ещё не одобрен и не
+  слит, выкладывать его нельзя. Preview открывается по другому адресу
+  (`https://agromarket-ferumit-git-feature-ci-bfg4.vercel.app`) — это другой Origin, его нет в `CORS_ORIGIN`,
+  и API не отдаёт ему заголовок. К тому же Preview на Vercel по умолчанию закрыт входом (Vercel Authentication:
+  302 на `vercel.com/sso-api`) — открыть его может только участник команды в Vercel.
+- **Время конвейера от Merge до зелёного smoke:** 1,5–1,7 мин: 99 с для PR «ci: deploy…» и 94 с для PR
+  с категориями (test ~30 с, deploy hook + сборка и запуск на Render + smoke ~60 с; сервер не спал). В логе
+  smoke видно переход: `#1–#3: версия e117ddc` → `#4: версия 5387166`, затем 4 зелёные проверки. На Render
+  в Events этот деплой — `deploy_hook`, коммит совпадает с merge-коммитом.
+- **Работал ли сайт во время «сломанного» деплоя с JWT_SECRET=123 и почему:** эксперимент не проводился — шаги 6.2–6.3 пропущены
+  (работа сдаётся через GitHub и отчёт). Как должно быть по механизму Render: новая версия при старте печатает
+  «JWT_SECRET слишком короткий для продакшена (нужно от 32 символов)» и завершается с кодом 1 (проверено локально:
+  `NODE_ENV=production JWT_SECRET=123 node server.js`), Health Check не проходит, в Events — Deploy failed.
+  Трафик на неё не переключается, поэтому магазин продолжает работать на старой версии (zero-downtime deploy).
+- **Rollback или git revert — что вы сделаете ночью при аварии и что утром:** ночью — Rollback на Render:
+  минута и одна кнопка, разворачивается старая готовая сборка (без тестов). Утром — `git revert` через PR:
+  новый коммит, отменяющий изменения, проходит тесты, ревью и smoke, и `main` снова совпадает с продакшеном.
+  Rollback на Render на практике не выполнялся (шаг 6.3 пропущен).
+- **Аудит (часть 7), пункты 1–7:**
+  1. `git log --all --oneline -S "neon.tech"` и `-S "npg_"` — пусто в обоих репозиториях (проверил и строки
+     ключей Render/Vercel/Neon). `.env`, `.env.test`, `.env.neon`, `.env.smoke` закрыты шаблоном `.env*`.
+  2. `/api/products/abc`: локально — `{"error":"Неверный формат значения","detail":"invalid input syntax for type
+     integer: \"abc\""}`, на продакшене — только `{"error":"Неверный формат значения"}` (400).
+  3. Есть `strict-transport-security: max-age=31536000; includeSubDomains`, `x-content-type-options: nosniff`,
+     `content-security-policy`, `x-frame-options: SAMEORIGIN` и др. от helmet; `x-powered-by` нет.
+  4. `http://agromarket-api-ferumit.onrender.com/api/health` → **301** на `https://…` — только HTTPS.
+  5. Вход `admin@agromarket.kz` / `Admin12345` на продакшене — **401** «Неверный email или пароль»; рабочий
+     пароль — длинный случайный, только в `.env.neon`.
+  6. Сначала **не работало**: с одного IP (95.82.67.100) шесть неверных входов подряд — шесть 401, без 429.
+     Ключ лимита виден в заголовке `ratelimit-policy` как `pk` — первые 12 символов SHA-256 от ключа, и он
+     менялся между запросами. Перебором диапазонов Cloudflare нашлось, что при `trust proxy = 2` ключом были
+     узлы Cloudflare (162.158.94.30, 172.69.101.144), при `1` — внутренние адреса Render. На Render запрос идёт
+     через **три** прокси: Cloudflare → вход Render → внутренний прокси Render, поэтому IP посетителя — третий
+     справа в `X-Forwarded-For`. После `app.set('trust proxy', 3)` (PR #6 с `2` не помог, исправлено в #7) `pk` во
+     всех запросах — `sha256("95.82.67.100")`, попытки 1–5 → 401 (`r=4…0`), **6-я → 429** «Слишком много
+     попыток входа. Попробуйте через 15 минут»; подделанный `X-Forwarded-For: 1.2.3.4` ключ не меняет.
+  7. Neon, Free: восстановление на **6 часов** назад (`history_retention_seconds = 21600`, раздел Backup & Restore).
+- **Холодный старт:** первый ответ **22,6 с**, повторный **0,44 с** (`/api/health` после 21 минуты без
+  запросов; время до первого байта, подключение — 0,15 с). Render Free усыпляет сервер после 15 минут простоя:
+  первый запрос ждёт, пока Render запустит контейнер заново (`npm run db:migrate && npm start`), а Neon за это
+  время будит и базу (засыпает через 5 минут). Дальше сервер и база уже работают — ответ за доли секунды.
+  Пользователю, который ждёт каталог, честнее показать «Сервер просыпается, это может занять до минуты»,
+  чем пустую страницу; в настоящем магазине — платный тариф без засыпания.
+- **Использовал(а) ли ИИ и для чего:** да, Claude Code (ИИ-ассистент) — по тексту лабораторной написал код
+  (части 1, 5, 6), smoke-тест, CI/CD и этот README; создал базу в Neon, сервис на Render и проект на Vercel
+  через их API, провёл PR через CI и проверил сайт в браузере (headless Chrome). Результаты выше — с запуска.
+- **Ревью напарника:** _заполнить после ревью напарника_
+
+### Сдача
+
+- Сайт: https://agromarket-ferumit.vercel.app, API: https://agromarket-api-ferumit.onrender.com/api/health
+- agromarket-server: [#2 production-ready](https://github.com/Ferumit/agromarket-server/pull/2),
+  [#3 CD](https://github.com/Ferumit/agromarket-server/pull/3),
+  [#4 categories](https://github.com/Ferumit/agromarket-server/pull/4),
+  [#5 smoke категорий](https://github.com/Ferumit/agromarket-server/pull/5),
+  [#6](https://github.com/Ferumit/agromarket-server/pull/6) и [#7 trust proxy](https://github.com/Ferumit/agromarket-server/pull/7) (найдено в аудите),
+  [#8 docs/lab9](https://github.com/Ferumit/agromarket-server/pull/8)
+- agromarket-react: [#2 vercel.json](https://github.com/Ferumit/agromarket-react/pull/2),
+  [#3 CI](https://github.com/Ferumit/agromarket-react/pull/3)
+- Конвейер: [Actions](https://github.com/Ferumit/agromarket-server/actions) — запуски `main`: test → deploy (smoke)
+
+### Вопросы для защиты — шпаргалка
+
+1. **Части продакшена.** React — статические файлы на Vercel (CDN), Express API — Render (Frankfurt),
+   PostgreSQL — Neon (Frankfurt). Сервер и база в одном регионе: каждый запрос к API делает несколько запросов
+   к базе, и если они летят через океан, сайт тормозит.
+2. **Переменные Render и VITE_.** Render: `process.env` читается при **запуске** сервера, значения видит только
+   сервер. `VITE_`: Vite вписывает значение в JavaScript при **сборке**, его видит любой посетитель; после
+   изменения нужен Redeploy. Поэтому в `VITE_` — только публичное (адрес API).
+3. **db:init и миграция.** `db:init` — `DROP` + `CREATE` + тестовые данные: на продакшене стёр бы всё.
+   `db:migrate` — `CREATE TABLE IF NOT EXISTS` и `INSERT … ON CONFLICT DO NOTHING`: создаёт только недостающее.
+   Идемпотентность — повторный запуск даёт тот же результат, что и первый; поэтому миграция идёт при каждом старте.
+4. **CORS.** Браузер не отдаёт странице ответ с другого Origin (схема + домен + порт), если сервер не разрешил
+   его заголовком `Access-Control-Allow-Origin`. Сначала в `CORS_ORIGIN` был только localhost; добавили точный
+   адрес Vercel (без `/` в конце) и задеплоили.
+5. **trust proxy.** На Render запрос приходит через прокси, настоящий IP — в `X-Forwarded-For`. Без
+   `trust proxy` `req.ip` — адрес прокси: лимит входа считал бы всех пользователей одним (после 5 чужих ошибок
+   заблокировал бы всех), а express-rate-limit ругается `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`. Число — сколько
+   прокси стоит перед сервером: у нас их три (Cloudflare и два прокси Render), с `1` лимит считался по узлам
+   Cloudflare и Render (аудит, пункт 6). Больше, чем прокси на самом деле, ставить нельзя — тогда `req.ip`
+   возьмётся из той части заголовка, которую клиент может подделать.
+6. **Конвейер после Merge.** push в main → `test` (PostgreSQL в контейнере, `npm test`) → `deploy`: `curl` deploy
+   hook с `ref=SHA` → `smoke.js` ждёт эту версию в `/api/health` и проверяет продакшен. `needs: test` — без
+   зелёных тестов деплоя нет; `if` — деплой только при push в main, не в PR; `ref=SHA` — Render разворачивает
+   ровно проверенный коммит. Deploy hook — секрет: кто знает адрес, тот запускает деплой.
+7. **Smoke-тест** — несколько быстрых проверок живого продакшена после деплоя. Тесты ЛР8 гоняют код на
+   тестовой базе и создают/удаляют данные; smoke ходит в настоящий продакшен, где настоящие данные, поэтому
+   только читает (и проверяет 401 без токена).
+8. **500 и 400.** 5xx — ошибка сервера: текст (`ECONNREFUSED 10.0.0.5:5432`, SQL) подсказывает злоумышленнику
+   устройство системы, пользователю он бесполезен — в лог, наружу общая фраза. 4xx — ошибка клиента: текст
+   («Поле name обязательно») нужен, чтобы исправить запрос, и ничего не раскрывает.
+9. **SIGTERM и ранние ошибки.** По SIGTERM `server.close()` перестаёт принимать новые запросы, дожидается
+   текущих, потом `pool.end()` и выход. Неверная конфигурация — падаем сразу при старте: Render не переключит
+   трафик на версию, не прошедшую Health Check, и старая продолжит работать; иначе ошибка всплыла бы у покупателя.
+10. **Free после 15 минут простоя** сервер засыпает; первый запрос будит его около минуты (иногда 502), потом
+    быстро. Пользователь видит долгую загрузку каталога — лучше показать «Сервер просыпается…».
+11. **Rollback и git revert** — см. ответ выше: ночью Rollback, утром revert через PR.
+12. **Смена JWT_SECRET.** Все выданные токены станут недействительны: подпись, сделанная старым ключом, не
+    проходит `jwt.verify` с новым — пользователи получат 401 «Недействительный токен» и должны войти заново.
+    Так и делают при утечке ключа.
 
 ## Лабораторная 8 — ответы
 
