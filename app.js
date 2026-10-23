@@ -11,9 +11,25 @@ import ordersRouter from './routes/orders.js';
 // Приложение БЕЗ запуска сервера: его импортируют server.js и тесты (Supertest)
 const app = express();
 
+// Версия = первые 7 символов коммита. Render сам кладёт SHA в RENDER_GIT_COMMIT
+const VERSION = (process.env.RENDER_GIT_COMMIT || 'local').slice(0, 7);
+
+// На Render запрос приходит через прокси-балансировщик. Без этой строки
+// req.ip — адрес прокси, и лимит попыток входа (429) считал бы
+// ВСЕХ пользователей одним человеком
+app.set('trust proxy', 1);
+
 // Конвейер middleware: порядок app.use() = порядок звеньев
 app.use(helmet()); // защитные HTTP-заголовки — первым middleware
-app.use(cors({ origin: process.env.CORS_ORIGIN })); // разрешаем только наш frontend
+
+// CORS_ORIGIN может содержать несколько адресов через запятую:
+// https://agromarket-ЛОГИН.vercel.app,http://localhost:5173
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use(cors({ origin: allowedOrigins })); // разрешаем только наши frontend-адреса
+
 app.use(express.json({ limit: '10kb' })); // тело запроса -> req.body, не больше 10 КБ
 
 // В тестах лог каждого запроса только мешает читать результат
@@ -26,10 +42,15 @@ app.get('/', (req, res) => {
   res.send('АгроМаркет API работает');
 });
 
-// «Жив ли сервер и есть ли связь с базой?»
+// Health-check: хостинг и smoke-тест спрашивают «ты жив?».
+// Отвечаем «да», только если отвечает и база
 app.get('/api/health', async (req, res) => {
-  await pool.query('SELECT 1');
-  res.json({ status: 'ok', db: 'connected', time: new Date().toISOString() });
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', db: 'ok', version: VERSION });
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: 'unavailable', version: VERSION });
+  }
 });
 
 app.get('/api/about', (req, res) => {

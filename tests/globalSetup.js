@@ -9,4 +9,6 @@ export default function setup() {
   }
   // Пересоздаём таблицы и заполняем тестовую базу — как npm run db:init
   execSync('npm run db:init', { stdio: 'inherit' });
+  // Миграция поверх готовой базы не должна ничего ломать (идемпотентность)
+  execSync('npm run db:migrate', { stdio: 'inherit' });
 }
