@@ -63,6 +63,14 @@ check('несуществующий товар — 404', async () => {
   assert(res.status === 404, `ожидали 404, получили ${res.status}`);
 });
 
+check('категории: непустой список с числовым count', async () => {
+  const res = await fetch(`${API_URL}/categories`);
+  const list = await res.json();
+  assert(res.status === 200, `статус ${res.status}`);
+  assert(Array.isArray(list) && list.length > 0, 'список пуст');
+  assert(list.every((c) => Number.isInteger(c.count) && c.count > 0), 'count — не целое число');
+});
+
 async function main() {
   const health = await waitForVersion();
   console.log(`API работает: версия ${health.version}, база ${health.db}`);
