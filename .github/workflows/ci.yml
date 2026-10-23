@@ -48,3 +48,24 @@ jobs:
           cache: npm
       - run: npm ci                        # зависимости строго по package-lock.json
       - run: npm test                      # globalSetup сам выполнит db:init
+
+  deploy:
+    needs: test                    # только после зелёных тестов
+    # только для push в main; в Pull Request этот job будет "skipped"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency: production        # два деплоя одновременно не пойдут
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # ref=SHA: Render развернёт ровно тот коммит, который только что прошёл тесты
+      - name: Запустить деплой на Render
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}&ref=${{ github.sha }}"
+      - name: Smoke-тест продакшена
+        run: node scripts/smoke.js
+        env:
+          API_URL: ${{ vars.API_URL }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          EXPECTED_VERSION: ${{ github.sha }}
