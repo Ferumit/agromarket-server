@@ -1,20 +1,11 @@
 import { Router } from 'express';
 import { pool } from '../db/pool.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { idParam, validate } from '../middleware/validate.js';
+import { productSchema, productUpdateSchema } from '../validation/schemas.js';
 
 const router = Router();
 const adminOnly = [requireAuth, requireRole('admin')]; // цепочка из двух middleware
-
-// Возвращает текст ошибки или null, если всё в порядке
-function validateProduct(body) {
-  const { name, price } = body;
-  if (!name || !String(name).trim()) return 'Поле name обязательно';
-  const n = Number(price);
-  if (price === undefined || price === '' || !Number.isInteger(n) || n < 0) {
-    return 'Поле price должно быть целым числом ≥ 0';
-  }
-  return null;
-}
 
 // Бонус: сортировка. Имя столбца нельзя передать через $1 — параметрами передаются
 // только значения, поэтому в SQL попадает только строка из этого «белого списка»
@@ -45,8 +36,8 @@ router.get('/', async (req, res) => {
   res.json(rows);
 });
 
-// GET /api/products/2
-router.get('/:id', async (req, res) => {
+// GET /api/products/2  (idParam: /abc или /-1 → 400 ещё до базы)
+router.get('/:id', idParam, async (req, res) => {
   const { rows } = await pool.query(
     'SELECT * FROM products WHERE id = $1',
     [req.params.id]
@@ -57,35 +48,44 @@ router.get('/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-// POST /api/products — новый товар (только admin)
-router.post('/', adminOnly, async (req, res) => {
-  const body = req.body || {};
-  const error = validateProduct(body);
-  if (error) return res.status(400).json({ error });
-
-  const { name, category, price, unit, image } = body;
+// POST /api/products — новый товар (только admin).
+// Порядок: сначала кто ты (401/403), потом что прислал (400) — чужим не рассказываем о схеме
+router.post('/', adminOnly, validate(productSchema), async (req, res) => {
+  const { name, category, price, unit, image } = req.body;
   const { rows } = await pool.query(
     `INSERT INTO products (name, category, price, unit, image)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [name, category ?? null, Number(price), unit ?? 'кг', image ?? null]
+    [name, category, price, unit ?? 'кг', image ?? null]
   );
   res.status(201).json(rows[0]); // вернули созданный товар вместе с новым id
 });
 
 // PUT /api/products/5 — заменить товар целиком (только admin)
-router.put('/:id', adminOnly, async (req, res) => {
-  const body = req.body || {};
-  const error = validateProduct(body);
-  if (error) return res.status(400).json({ error });
-
-  const { name, category, price, unit, image } = body;
+router.put('/:id', adminOnly, idParam, validate(productSchema), async (req, res) => {
+  const { name, category, price, unit, image } = req.body;
   const { rows } = await pool.query(
     `UPDATE products
      SET name = $1, category = $2, price = $3, unit = $4, image = $5
      WHERE id = $6
      RETURNING *`,
-    [name, category ?? null, Number(price), unit ?? 'кг', image ?? null, req.params.id]
+    [name, category, price, unit ?? 'кг', image ?? null, req.params.id]
+  );
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Товар не найден' });
+  }
+  res.json(rows[0]);
+});
+
+// PATCH /api/products/5 — изменить только присланные поля (ЛР11, только admin): { "price": 3900 }
+router.patch('/:id', adminOnly, idParam, validate(productUpdateSchema), async (req, res) => {
+  // Имена столбцов — ключи, которые пропустила схема (белый список полей),
+  // значения передаются параметрами $1, $2 … — SQL-инъекции здесь нет
+  const fields = Object.keys(req.body);
+  const set = fields.map((field, i) => `${field} = $${i + 1}`).join(', ');
+  const { rows } = await pool.query(
+    `UPDATE products SET ${set} WHERE id = $${fields.length + 1} RETURNING *`,
+    [...Object.values(req.body), req.params.id]
   );
   if (rows.length === 0) {
     return res.status(404).json({ error: 'Товар не найден' });
@@ -94,7 +94,7 @@ router.put('/:id', adminOnly, async (req, res) => {
 });
 
 // DELETE /api/products/5 (только admin)
-router.delete('/:id', adminOnly, async (req, res) => {
+router.delete('/:id', adminOnly, idParam, async (req, res) => {
   const { rowCount } = await pool.query(
     'DELETE FROM products WHERE id = $1',
     [req.params.id]

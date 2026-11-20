@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { rateLimit } from 'express-rate-limit';
 import { pool } from '../db/pool.js';
 import { requireAuth } from '../middleware/auth.js';
+import { loginLimiter, registerLimiter } from '../middleware/rateLimit.js';
+import { validate } from '../middleware/validate.js';
+import { loginSchema, passwordChangeSchema, registerSchema } from '../validation/schemas.js';
 
 const router = Router();
 
@@ -16,35 +18,20 @@ function createToken(user) {
   );
 }
 
-// Защита от подбора пароля: не больше 5 неудачных входов за 15 минут с одного IP
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // окно — 15 минут
-  limit: 5, // не больше 5 попыток в окне
-  skipSuccessfulRequests: true, // считаем только неудачные входы
-  message: { error: 'Слишком много попыток входа. Попробуйте через 15 минут' },
-  standardHeaders: 'draft-8',
-  legacyHeaders: false,
-});
-
 // POST /api/auth/register  { name, email, password }
-router.post('/register', async (req, res) => {
-  const { name, email, password } = req.body || {};
-  if (!name || !email || !password) {
-    return res.status(400).json({ error: 'Поля name, email и password обязательны' });
-  }
-  if (String(password).length < 8) {
-    return res.status(400).json({ error: 'Пароль должен быть не короче 8 символов' });
-  }
+// Лимит — первым: запросы сверх лимита даже не проверяются. Затем схема: в req.body
+// остаются только name, email (обрезан, в нижнем регистре) и password
+router.post('/register', registerLimiter, validate(registerSchema), async (req, res) => {
+  const { name, email, password } = req.body;
+  const passwordHash = await bcrypt.hash(password, 10);
 
-  const passwordHash = await bcrypt.hash(String(password), 10);
-
-  // role не передаём и из req.body не читаем — база поставит DEFAULT 'user'
+  // role схема отбросила, а база поставит DEFAULT 'user'
   // (иначе любой прислал бы "role": "admin" — mass assignment)
   const { rows } = await pool.query(
     `INSERT INTO users (name, email, password_hash)
      VALUES ($1, $2, $3)
      RETURNING id, name, email, role, created_at`,
-    [String(name).trim(), String(email).trim().toLowerCase(), passwordHash]
+    [name, email, passwordHash]
   );
   const user = rows[0];
 
@@ -53,21 +40,16 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /api/auth/login  { email, password }
-router.post('/login', loginLimiter, async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Поля email и password обязательны' });
-  }
+// Защита от подбора пароля — loginLimiter (middleware/rateLimit.js)
+router.post('/login', loginLimiter, validate(loginSchema), async (req, res) => {
+  const { email, password } = req.body;
 
-  const { rows } = await pool.query(
-    'SELECT * FROM users WHERE email = $1',
-    [String(email).trim().toLowerCase()]
-  );
+  const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
   const user = rows[0];
 
   // Пользователь найден И пароль совпал с хэшем.
   // Одно сообщение на обе ошибки: нельзя перебором узнать, какие e-mail зарегистрированы
-  const ok = user && (await bcrypt.compare(String(password), user.password_hash));
+  const ok = user && (await bcrypt.compare(password, user.password_hash));
   if (!ok) {
     return res.status(401).json({ error: 'Неверный email или пароль' });
   }
@@ -90,25 +72,19 @@ router.get('/me', requireAuth, async (req, res) => {
 });
 
 // Бонус: PATCH /api/auth/password  { oldPassword, newPassword } — нужен токен
-router.patch('/password', requireAuth, async (req, res) => {
-  const { oldPassword, newPassword } = req.body || {};
-  if (!oldPassword || !newPassword) {
-    return res.status(400).json({ error: 'Поля oldPassword и newPassword обязательны' });
-  }
-  if (String(newPassword).length < 8) {
-    return res.status(400).json({ error: 'Пароль должен быть не короче 8 символов' });
-  }
+router.patch('/password', requireAuth, validate(passwordChangeSchema), async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
 
   const { rows } = await pool.query(
     'SELECT password_hash FROM users WHERE id = $1',
     [req.user.id]
   );
-  const ok = rows[0] && (await bcrypt.compare(String(oldPassword), rows[0].password_hash));
+  const ok = rows[0] && (await bcrypt.compare(oldPassword, rows[0].password_hash));
   if (!ok) {
     return res.status(401).json({ error: 'Неверный текущий пароль' });
   }
 
-  const passwordHash = await bcrypt.hash(String(newPassword), 10);
+  const passwordHash = await bcrypt.hash(newPassword, 10);
   await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, req.user.id]);
   res.status(204).end();
 });
