@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { pool } from '../db/pool.js';
-import { validateOrder } from '../middleware/validateOrder.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/auth.js';
+import { idParam, validate } from '../middleware/validate.js';
+import { orderSchema, orderStatusSchema } from '../validation/schemas.js';
 
 const router = Router();
 const adminOnly = [requireAuth, requireRole('admin')]; // заявки — персональные данные клиентов
@@ -36,8 +37,9 @@ router.get('/my', requireAuth, async (req, res) => {
 
 // POST /api/orders — новая заявка (форма из React), доступна всем.
 // optionalAuth: если клиент вошёл, заявка привязывается к нему (user_id).
-// Обязательные поля и минимум 10 кг проверяет validateOrder (ЛР5)
-router.post('/', optionalAuth, validateOrder, async (req, res) => {
+// Поля проверяет схема orderSchema (ЛР11; в ЛР5 — validateOrder): обязательные name, email,
+// quantity ≥ 10, длина строк ограничена — это единственный POST, открытый всем
+router.post('/', optionalAuth, validate(orderSchema), async (req, res) => {
   const { product_id, name, email, phone, quantity, date, comment } = req.body;
 
   // || null превращает пустую строку из формы в NULL: база не примет '' как дату или число
@@ -52,13 +54,10 @@ router.post('/', optionalAuth, validateOrder, async (req, res) => {
 });
 
 // PATCH /api/orders/3   тело: { "status": "processing" }  (только admin)
-router.patch('/:id', adminOnly, async (req, res) => {
-  const { status } = req.body || {};
-  if (!status) {
-    return res.status(400).json({ error: 'Поле status обязательно' });
-  }
+router.patch('/:id', adminOnly, idParam, validate(orderStatusSchema), async (req, res) => {
+  const { status } = req.body;
 
-  // Список допустимых статусов проверяет CHECK в базе: 'lost' -> ошибка 23514 -> 400
+  // Список статусов проверяет схема, второй рубеж — CHECK в базе
   const { rows } = await pool.query(
     'UPDATE orders SET status = $1 WHERE id = $2 RETURNING *',
     [status, req.params.id]
