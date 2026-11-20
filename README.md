@@ -4,7 +4,7 @@
 
 Backend «АгроМаркета» на Node.js + Express + PostgreSQL: каталог товаров с полным CRUD,
 оптовые заявки из React-формы, пользователи и вход по JWT. Учебный проект по дисциплине
-«Fullstack-разработка», лабораторные 5–9.
+«Fullstack-разработка», лабораторные 5–11. Текущая версия — [v1.0.0](https://github.com/Ferumit/agromarket-server/releases/tag/v1.0.0).
 
 Связанные репозитории: [agromarket-react](https://github.com/Ferumit/agromarket-react) — frontend,
 [agromarket](https://github.com/Ferumit/agromarket) — исходный `db.json` (лаб. 1–2).
@@ -85,7 +85,33 @@ Smoke-тест вручную: `node --env-file=.env.smoke scripts/smoke.js` (`A
 | `tests/products.test.js` | каталог: список, поля товара, 404, товар по id | интеграционный |
 | `tests/auth.test.js` | регистрация, mass assignment, 409, короткий пароль, e-mail в нижнем регистре, вход, `/auth/me` | интеграционный |
 | `tests/access.test.js` | права: 401 / 403 / чужая подпись, CRUD админа, 404 и 400 при изменении, доступ к заявкам | интеграционный |
+| `tests/validation.test.js` | схемы zod (ЛР11): e-mail, длина пароля в байтах, цена -500, длинное название и фото `javascript:`, id `abc`/`-1`, PATCH `{}` и частичный PATCH, тело > 10 КБ → 413, заявка | интеграционный |
 | `tests/middleware.test.js` | `requireRole`, `requireAuth` (нет заголовка, верный и истёкший токен), `errorHandler` (500 в production скрыт, 400 — свой текст) на mock-объектах | unit |
+
+## Безопасность
+
+- **helmet** — защитные заголовки (CSP, HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options`),
+  без `X-Powered-By`.
+- **CORS** только для адресов из `CORS_ORIGIN`: `https://agromarket-ferumit.vercel.app`, `http://localhost:5173`.
+  Чужой Origin не получает `Access-Control-Allow-Origin`. Запросы без Origin (curl, Postman, Supertest) проходят:
+  от них защищают JWT, лимиты и валидация.
+- **Rate limit** (`middleware/rateLimit.js`):
+  - `/api/auth/login` — 5 неудачных попыток за 15 минут с одного IP (успешные входы не считаются);
+  - `/api/auth/register` — 10 запросов за 15 минут (в тестах выключен).
+
+  Ответ при превышении — 429 с заголовками `RateLimit` и `Retry-After`. `trust proxy = 3`: IP посетителя
+  берётся из `X-Forwarded-For` за тремя прокси Render (ЛР9).
+- **Валидация zod** (`validation/schemas.js` + `middleware/validate.js`) для:
+  - регистрации и входа, смены пароля;
+  - товара (POST / PUT / PATCH);
+  - заявки и статуса заявки.
+
+  Ошибка — `400 { "error": "Ошибка валидации", "details": [{ "field": "price", "message": "Цена должна быть больше 0" }] }`.
+  Поля, которых нет в схеме (`role`, `id`), отбрасываются — защита от mass assignment.
+- **id в адресе** (`idParam`): `/api/products/abc`, `/-1`, `/1.5` → 400 «Некорректный id», запрос до базы не доходит.
+- **Размеры:** тело запроса — не больше 10 КБ (413), пароль — не больше 72 байт (предел bcrypt), длина строк
+  ограничена в схемах.
+- **Зависимости:** `npm audit --omit=dev` — 0 уязвимостей (после `npm audit fix` в ЛР11).
 
 ## Правила работы с Git
 
@@ -113,7 +139,7 @@ Smoke-тест вручную: `node --env-file=.env.smoke scripts/smoke.js` (`A
 |--------|--------------------|--------------------------------------------|--------|-------------------------|
 | GET    | /api/health        | сервер и связь с БД, `version` — SHA коммита | все  | 200, 503                |
 | GET    | /api/about         | name, version, author                      | все    | 200                     |
-| POST   | /api/auth/register | регистрация `{ name, email, password }`    | все    | 201, 400, 409           |
+| POST   | /api/auth/register | регистрация `{ name, email, password }`    | все    | 201, 400, 409, 429      |
 | POST   | /api/auth/login    | вход `{ email, password }` → `{ user, token }` | все | 200, 400, 401, 429      |
 | GET    | /api/auth/me       | текущий пользователь                       | токен  | 200, 401                |
 | PATCH  | /api/auth/password | смена пароля `{ oldPassword, newPassword }` | токен | 204, 400, 401           |
@@ -121,6 +147,7 @@ Smoke-тест вручную: `node --env-file=.env.smoke scripts/smoke.js` (`A
 | GET    | /api/products/:id  | один товар                                 | все    | 200, 400, 404           |
 | POST   | /api/products      | создать товар                              | admin  | 201, 400, 401, 403      |
 | PUT    | /api/products/:id  | изменить товар целиком                     | admin  | 200, 400, 401, 403, 404 |
+| PATCH  | /api/products/:id  | изменить только присланные поля (ЛР11)     | admin  | 200, 400, 401, 403, 404 |
 | DELETE | /api/products/:id  | удалить товар                              | admin  | 204, 401, 403, 404      |
 | GET    | /api/categories    | категории и число товаров в каждой         | все    | 200                     |
 | GET    | /api/orders        | заявки + название товара, `?status=`       | admin  | 200, 401, 403           |
@@ -130,7 +157,7 @@ Smoke-тест вручную: `node --env-file=.env.smoke scripts/smoke.js` (`A
 | *      | любой другой адрес | JSON-ошибка «Маршрут … не найден»          | все    | 404                     |
 
 Токен передаётся в заголовке `Authorization: Bearer <токен>`. Ошибки тела запроса: битый JSON → 400,
-тело больше 10 КБ → 413.
+тело больше 10 КБ → 413, данные не прошли схему zod → 400 с `details` по полям (см. «Безопасность»).
 
 Параметры `GET /api/products` можно сочетать:
 
@@ -149,7 +176,8 @@ Smoke-тест вручную: `node --env-file=.env.smoke scripts/smoke.js` (`A
   "quantity": 25, "date": "2026-10-20", "comment": "..." }
 ```
 
-`name`, `email`, `quantity` обязательны, `quantity` ≥ 10, иначе ответ `400 { "error": "..." }`.
+`name`, `email`, `quantity` обязательны, `quantity` — целое от 10 до 100 000, `product_id: ""` (товар не выбран)
+сохраняется как `NULL`; иначе ответ `400 { "error": "Ошибка валидации", "details": [...] }` (схема `orderSchema`).
 Статусы заявки: `new` → `processing` → `done` или `cancelled`.
 
 Тесты: коллекция [postman/agromarket.postman_collection.json](postman/agromarket.postman_collection.json)
@@ -171,7 +199,8 @@ agromarket-server/
 │   └── migrate.js          ← npm run db:migrate: CREATE TABLE IF NOT EXISTS (продакшен)
 ├── middleware/
 │   ├── logger.js           ← лог запросов: GET /api/products -> 200 (2 мс)
-│   ├── validateOrder.js    ← проверка заявки (middleware на уровне маршрута)
+│   ├── validate.js         ← validate(schema): 400 с details; idParam: проверка /:id (ЛР11)
+│   ├── rateLimit.js        ← лимиты на вход и регистрацию
 │   ├── auth.js             ← requireAuth, requireRole, optionalAuth
 │   └── errorHandler.js     ← ошибки БД -> 400/409, битый JSON -> 400, большое тело -> 413, остальное -> 500
 ├── routes/
@@ -179,6 +208,8 @@ agromarket-server/
 │   ├── products.js         ← CRUD /api/products
 │   ├── orders.js           ← /api/orders
 │   └── categories.js       ← /api/categories
+├── validation/
+│   └── schemas.js          ← схемы zod: регистрация, вход, товар, заявка (ЛР11)
 ├── postman/                ← коллекция с автотестами
 ├── scripts/
 │   └── smoke.js            ← smoke-тест продакшена (ЛР9)
@@ -192,7 +223,130 @@ agromarket-server/
 ```
 
 Конвейер: (`trust proxy`) `helmet()` → `cors()` → `express.json({ limit: '10kb' })` → `logger` → роутеры
-→ обработчик 404 → `errorHandler`.
+→ обработчик 404 → `errorHandler`. Внутри маршрута: лимит (вход, регистрация) → `requireAuth` / `requireRole`
+→ `idParam` → `validate(схема)` → обработчик.
+
+## Лабораторная 11 — ответы
+
+Защита API, валидация zod и релиз v1.0.0. Многое из ЛР11 появилось раньше: helmet, CORS по списку и лимит
+на вход — в ЛР7, `trust proxy` — в ЛР9. Поэтому в таблице «до» часть проверок уже зелёная.
+Проверки «до / после» — на локальном API (`node server.js`) и `curl -I` продакшена.
+
+- **Таблица аудита «до / после»:**
+
+  | Проверка | До | После |
+  |---|---|---|
+  | `npm audit --omit=dev`: high/critical | 1 high (body-parser), ещё 2 moderate (qs, ip-address) | 0 уязвимостей |
+  | Секреты в истории git | нет | нет |
+  | `X-Powered-By: Express` | нет (helmet с ЛР7); есть CSP, HSTS, `nosniff`, `X-Frame-Options: SAMEORIGIN` | нет |
+  | CORS для `https://evil.example` | нет `Access-Control-Allow-Origin` (список `CORS_ORIGIN`) | так же |
+  | 20 неверных паролей подряд | 401 × 5, затем 429 × 15 (лимит ЛР7: 5 неудачных за 15 мин) | так же |
+  | 12 регистраций подряд | 400 × 12, лимита нет | 400 × 10, затем 429 |
+  | POST товара с `price = -500` | 400 «Поле price должно быть целым числом ≥ 0» (ручная проверка ЛР6) | 400 `details: [{ field: "price", message: "Цена должна быть больше 0" }]` |
+  | Регистрация с e-mail «не-почта» | **201 — пользователь создан** | 400, `details` по полю `email` |
+  | Товар с названием из 5000 символов | **201 — товар создан** (удалил вручную) | 400 «Название — не больше 200 символов» |
+  | Пароль из 9000 символов | **201** (bcryptjs взял только первые 72 байта) | 400 «Пароль слишком длинный (не больше 72 байт)» |
+  | `GET /api/products/abc` | 400, но из ошибки PostgreSQL 22P02; локально с текстом базы в `detail` | 400 «Некорректный id», до базы не доходит |
+
+- **npm audit: что нашли, что исправили, что оставили и почему:** три уязвимости, все в продакшен-зависимостях
+  (транзитивные, от Express и express-rate-limit):
+  - `body-parser` 2.3.0, **high**: отказ в обслуживании (DoS) из-за лишних байтов после сжатого тела запроса;
+  - `qs` 6.16.0, moderate: `qs.stringify` с `arrayFormat: 'comma'` падает с TypeError;
+  - `ip-address` 10.7.3, moderate: квадратичное время разбора IPv6-адреса с zone id. Он используется
+    в express-rate-limit для ключей.
+
+  `npm audit fix` без `--force` обновил их до 2.4.0, 6.17.1 и 10.7.6 (ломающих изменений нет). Тесты зелёные,
+  `npm audit` и `npm audit --omit=dev` — 0. Ничего не оставили.
+- **Были ли секреты в истории git:** нет. `git log --all -p | grep -iE "DATABASE_URL|JWT_SECRET|password="` нашёл:
+  - имена переменных в коде и README;
+  - значения из `ci.yml` для контейнера CI (`ci-test-secret-not-for-production`, `postgres:postgres@localhost`);
+  - `.env.example` с заглушками (`change-me`).
+
+  Строка `DATABASE_URL` в `.env.example` не совпадает с настоящей из `.env`: сравнил по хэшу, не выводя на экран.
+  `neon.tech` встречается только в тексте README ЛР9. `git ls-files | grep env` → `.env.example` и Postman-окружение
+  продакшена с пустым `adminPassword`. Остальные `.env*` закрыты `.gitignore`.
+- **Был ли возможен mass assignment (`role: admin`) до валидации:** нет, с ЛР7: `INSERT` перечисляет только
+  `name, email, password_hash`, а роль ставит `DEFAULT 'user'` в базе. Это проверяет тест «не даёт стать админом
+  через тело запроса» в `auth.test.js`. Теперь есть второй рубеж: zod отбрасывает всё, чего нет в схеме, и `role`
+  до обработчика не доходит. То же для нового `PATCH /api/products/:id`: тело `{ "price": "3900", "id": 1 }`
+  меняет только цену, `id` отброшен (тест в `validation.test.js`). Опаснее были поля без ограничений: аккаунт
+  с e-mail «не-почта», название из 5000 символов, пароль из 9000 символов (см. таблицу).
+- **Зачем trust proxy на Render:** запрос приходит не напрямую, а через прокси, и `req.ip` без настройки — адрес
+  прокси. Лимит входа тогда общий на всех: 5 чужих ошибок — и вход закрыт для всего магазина. Настоящий IP —
+  в `X-Forwarded-For`. У нас перед сервером три прокси (Cloudflare → вход Render → внутренний прокси Render),
+  поэтому `trust proxy = 3`, а не 1, как в тексте лабораторной. Это нашли в аудите ЛР9 по заголовку
+  `RateLimit-Policy`: с 1 ключом были узлы Cloudflare.
+- **Почему проверки в React-форме недостаточно:** форма — только один из способов отправить запрос. Тот же
+  `POST /api/products` можно отправить из Postman, curl или из Console браузера с токеном из `localStorage`,
+  и `min="1"` у поля цены там не действует. E2E-тест ЛР12 «цена -500 в обход формы» отправляет такой запрос
+  из браузера администратора — отвечает уже сервер: 400 с `details`. Проверка в форме — для удобства
+  (мгновенная подсказка), на сервере — для безопасности.
+- **Время отката на Vercel; почему после отката нужен git revert:** _заполняется после тренировки отката
+  (часть 5.2)_
+- **Использовал(а) ли ИИ и для чего:** да, Claude Code (ИИ-ассистент). По тексту лабораторной он:
+  - провёл аудит (`npm audit`, поиск секретов, заголовки продакшена);
+  - написал схемы zod, `validate`, `idParam`, лимит на регистрацию, тесты и этот README;
+  - вывел ошибки `details` в React-формах;
+  - запускал проверки «до / после».
+
+  Результаты в таблице — с этих запусков.
+- **Ревью напарника:** _заполнить после ревью напарника_
+
+### Сдача
+
+- agromarket-server: [#9 security/hardening](https://github.com/Ferumit/agromarket-server/pull/9), docs/lab11 — этот README
+- agromarket-react: [#8 ошибки из details](https://github.com/Ferumit/agromarket-react/pull/8)
+- Релизы v1.0.0: [agromarket-server](https://github.com/Ferumit/agromarket-server/releases/tag/v1.0.0),
+  [agromarket-react](https://github.com/Ferumit/agromarket-react/releases/tag/v1.0.0)
+- Демонстрация:
+  - цикл из 20 запросов входа (401 → 429);
+  - `price = -500` → 400;
+  - `curl -I` без `X-Powered-By`;
+  - `npm test`.
+
+  Команды — в части 1 лабораторной, скриншоты форм — `agromarket-react/screenshots/lab11-*.png`.
+
+### Вопросы для защиты — шпаргалка
+
+1. **helmet.** Ставит около 15 защитных заголовков одной строкой и убирает `X-Powered-By`.
+   - `Content-Security-Policy` — откуда браузеру можно грузить скрипты и стили: мешает XSS;
+   - `Strict-Transport-Security` — только HTTPS, без отката на HTTP;
+   - `X-Content-Type-Options: nosniff` — браузер не «угадывает» тип файла;
+   - `X-Frame-Options` — сайт нельзя встроить в чужой `<iframe>` (clickjacking).
+2. **CORS** — защита браузера: чужой сайт в браузере пользователя не прочитает ответ нашего API. От curl
+   и Postman он не защищает: они не браузер и заголовок не проверяют. Против них — JWT, лимиты, валидация.
+3. **Brute force** — перебор паролей. Лимит: 5 неудачных попыток за 15 минут с одного IP, а перебору нужны
+   тысячи попыток. Лимит ставят на `/login` и `/register`: общий лимит на весь API мешал бы обычным покупателям
+   листать каталог.
+4. **trust proxy** — см. ответ выше: без него у всех один IP — прокси.
+5. **Форма недостаточна** — запрос отправляется в обход формы (Console, Postman). Показать: `fetch` в Console
+   с ценой -500 → 400 от сервера.
+6. **Mass assignment** — запись в базу всех полей из запроса подряд, включая те, что пользователь менять не
+   должен (`role: "admin"`). У нас `INSERT` с явным списком полей, а zod отбрасывает поля не из схемы.
+7. **`/api/products/abc` → 400:** это ошибка клиента, и ответ должен это сказать. 500 значит «сломался сервер»:
+   в логах это авария, а текст ошибки базы рассказывает, как устроена система. `idParam` отсекает такой id
+   до базы.
+8. **Размер тела и длина пароля:** без ограничений один запрос в мегабайты занимает память и время сервера,
+   а bcrypt на длинном пароле долго считает хэш — простой способ «положить» сервер. Тело — 10 КБ (413),
+   пароль — 72 байта: bcrypt всё равно учитывает только их.
+9. **Коды:**
+   - 400 — данные неверные;
+   - 401 — не вошёл или токен недействителен;
+   - 403 — вошёл, но прав нет (покупатель → POST товара);
+   - 413 — тело слишком большое;
+   - 429 — слишком много запросов, подождите (`Retry-After`).
+10. **npm audit** сверяет пакеты из `package-lock.json` с базой известных уязвимостей. devDependencies (vitest,
+    supertest) не попадают на Render (`npm ci --omit=dev`), их уязвимости опасны только на машине разработчика
+    и в CI.
+11. **Секрет попал в git и файл удалили** — проблема не решена: секрет остаётся в истории, и любой клон его
+    видит. Нужно сменить сам секрет (пароль Neon, `JWT_SECRET` на Render), тогда старое значение бесполезно.
+12. **v1.0.0** = MAJOR.MINOR.PATCH:
+    - 1.0.1 — исправили ошибку;
+    - 1.1.0 — добавили возможность без поломок (например, `PATCH /api/products/:id`);
+    - 2.0.0 — старые клиенты перестанут работать (переименовали поле в ответе, изменили формат ошибок).
+13. **Instant Rollback и git revert.** Rollback на Vercel за секунды переключает домен на старую готовую сборку,
+    но в `main` код остаётся сломанным, и следующий деплой вернёт ошибку. `git revert` — новый коммит
+    с отменой, через PR, CI и ревью: `main` снова совпадает с продакшеном. Ночью — Rollback, утром — revert.
 
 ## Лабораторная 9 — ответы
 
