@@ -281,21 +281,51 @@ agromarket-server/
   и `min="1"` у поля цены там не действует. E2E-тест ЛР12 «цена -500 в обход формы» отправляет такой запрос
   из браузера администратора — отвечает уже сервер: 400 с `details`. Проверка в форме — для удобства
   (мгновенная подсказка), на сервере — для безопасности.
-- **Время отката на Vercel; почему после отката нужен git revert:** _заполняется после тренировки отката
-  (часть 5.2)_
+- **Время отката на Vercel; почему после отката нужен git revert:** откат занял **5,4 с** — от запроса
+  до момента, когда главная снова отдала старую сборку (`assets/index-CizeWWhN.js`). Как прошла тренировка:
+  1. [PR #13](https://github.com/Ferumit/agromarket-react/pull/13): в шапке «🌾 СЛОМАНО» вместо
+     «🌾 АгроМаркет». CI зелёный: компонентные тесты шапку не проверяют, 32 из 32.
+  2. Merge в 08:42:47. Через 7 с продакшен отдавал новую сборку со «СЛОМАНО»
+     ([скриншот](screenshots/lab11-rollback-broken.png)).
+  3. В 08:43:23 — Instant Rollback на предыдущий деплой `e2a5711`. Это сделано через API Vercel
+     (`POST /v9/projects/…/rollback/…`), то же самое делает кнопка Deployments → ⋯ → Instant Rollback.
+     В 08:43:28 сайт снова «🌾 АгроМаркет» ([скриншот](screenshots/lab11-rollback-restored.png)).
+     Всего сайт был сломан около 35 с.
+  4. Smoke после деплоя (ЛР12) поломку поймал: первая попытка упала с `Expected pattern: /АгроМаркет/`,
+     `Received string: "🌾 СЛОМАНО"`. Повтор (в CI `retries: 2`) пришёлся уже на откатанный сайт и прошёл,
+     поэтому весь [запуск](https://github.com/Ferumit/agromarket-react/actions/runs/44669580603) зелёный
+     с пометкой «1 flaky». Вывод: «flaky» в smoke продакшена — повод посмотреть, а не отмахнуться.
+     Повторы могут спрятать настоящую аварию, если её успели исправить за время повтора.
+  5. [PR #14](https://github.com/Ferumit/agromarket-react/pull/14) — `git revert` слияния #13, в `main` «СЛОМАНО»
+     больше нет.
+
+  Почему одного отката недостаточно:
+  - **В `main` остаётся сломанный код.** Instant Rollback только переключает домен на старую готовую сборку.
+    Любое следующее слияние соберёт `main` и вернёт «СЛОМАНО». `git revert` — новый коммит с отменой, через PR
+    и CI, после него `main` снова совпадает с продакшеном.
+  - **Vercel после отката выключает автопубликацию.** После Instant Rollback он не переводит домен на новые
+    деплои (`autoAssignCustomDomains: false`). Деплой revert-коммита `b11122e` собрался, но домен остался
+    на откатанной версии. Его пришлось перевести вручную (Promote, `POST /v10/projects/…/promote/…`). После
+    этого автопубликация снова включилась, а сборка совпала с рабочей до байта: тот же `index-CizeWWhN.js`.
+  - Без revert такой Promote вернул бы на сайт поломку.
 - **Использовал(а) ли ИИ и для чего:** да, Claude Code (ИИ-ассистент). По тексту лабораторной он:
   - провёл аудит (`npm audit`, поиск секретов, заголовки продакшена);
   - написал схемы zod, `validate`, `idParam`, лимит на регистрацию, тесты и этот README;
   - вывел ошибки `details` в React-формах;
-  - запускал проверки «до / после».
+  - запускал проверки «до / после»;
+  - выпустил релизы v1.0.0;
+  - провёл тренировку отката через API Vercel.
 
-  Результаты в таблице — с этих запусков.
+  Результаты в таблице и время отката — с этих запусков.
 - **Ревью напарника:** _заполнить после ревью напарника_
 
 ### Сдача
 
-- agromarket-server: [#9 security/hardening](https://github.com/Ferumit/agromarket-server/pull/9), docs/lab11 — этот README
-- agromarket-react: [#8 ошибки из details](https://github.com/Ferumit/agromarket-react/pull/8)
+- agromarket-server: [#9 security/hardening](https://github.com/Ferumit/agromarket-server/pull/9),
+  [#10 docs/lab11](https://github.com/Ferumit/agromarket-server/pull/10) — этот README
+- agromarket-react: [#8 ошибки из details](https://github.com/Ferumit/agromarket-react/pull/8),
+  тренировка отката — [#13 «СЛОМАНО»](https://github.com/Ferumit/agromarket-react/pull/13) и
+  [#14 revert](https://github.com/Ferumit/agromarket-react/pull/14)
 - Релизы v1.0.0: [agromarket-server](https://github.com/Ferumit/agromarket-server/releases/tag/v1.0.0),
   [agromarket-react](https://github.com/Ferumit/agromarket-react/releases/tag/v1.0.0)
 - Демонстрация:
