@@ -1,6 +1,6 @@
 {
   "name": "agromarket-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Express API для «АгроМаркета»: каталог товаров и оптовые заявки",
   "type": "module",
   "main": "server.js",
