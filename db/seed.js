@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { pool } from './pool.js';
+import { applyMigrations } from './migrations.js';
 
 // --- Предохранитель: db:init УДАЛЯЕТ ВСЕ ТАБЛИЦЫ ---
 // Разрешаем без вопросов только локальную базу (и базу CI — она тоже localhost)
@@ -16,12 +17,13 @@ if (!isLocal && !process.argv.includes('--force')) {
 const schema = readFileSync('./db/schema.sql', 'utf-8');
 const { products } = JSON.parse(readFileSync('./data/db.json', 'utf-8'));
 
-await pool.query(schema); // 1. создаём таблицы
+await pool.query(schema); // 1. создаём таблицы схемы v1.0.0
+await applyMigrations(pool); // …и доводим их до текущей версии миграциями (ЛР13)
 
-for (const p of products) { // 2. переносим товары из db.json (id раздаст SERIAL)
+for (const p of products) { // 2. переносим товары из db.json (id раздаст SERIAL), на складе — по 20
   await pool.query(
-    `INSERT INTO products (name, category, price, unit, image)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO products (name, category, price, unit, image, stock)
+     VALUES ($1, $2, $3, $4, $5, 20)`,
     [p.name, p.category ?? null, Math.round(Number(p.price)), p.unit ?? 'кг', p.image ?? null]
   );
 }
@@ -34,7 +36,19 @@ await pool.query(
   ['Администратор', process.env.ADMIN_EMAIL, hash]
 );
 
+// 4. Фермер (ЛР13), если задан в .env: ему принадлежит первая половина товаров
+const { FARMER_EMAIL, FARMER_PASSWORD } = process.env;
+if (FARMER_EMAIL && FARMER_PASSWORD) {
+  const { rows: [farmer] } = await pool.query(
+    `INSERT INTO users (name, email, password_hash, role)
+     VALUES ('Фермер Ержан', $1, $2, 'farmer') RETURNING id`,
+    [FARMER_EMAIL.toLowerCase(), await bcrypt.hash(FARMER_PASSWORD, 10)]
+  );
+  await pool.query('UPDATE products SET farmer_id = $1 WHERE id <= $2', [farmer.id, Math.ceil(products.length / 2)]);
+}
+
 console.log(
-  `Готово: товаров — ${products.length}, админ — ${process.env.ADMIN_EMAIL}`
+  `Готово: товаров — ${products.length}, админ — ${process.env.ADMIN_EMAIL}` +
+  (FARMER_EMAIL && FARMER_PASSWORD ? `, фермер — ${FARMER_EMAIL}` : '')
 );
-await pool.end(); // 4. закрываем соединения, иначе скрипт не завершится
+await pool.end(); // 5. закрываем соединения, иначе скрипт не завершится

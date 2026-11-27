@@ -22,11 +22,11 @@ export function requireAuth(req, res, next) {
   }
 }
 
-// Пропускает дальше только пользователей с нужной ролью.
-// Используется ПОСЛЕ requireAuth: requireRole('admin')
-export function requireRole(role) {
+// Пропускает дальше только пользователей с нужной ролью (одной из нескольких).
+// Используется ПОСЛЕ requireAuth: requireRole('admin'), requireRole('admin', 'farmer')
+export function requireRole(...roles) {
   return (req, res, next) => {
-    if (req.user.role !== role) {
+    if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Недостаточно прав' });
     }
     next();
