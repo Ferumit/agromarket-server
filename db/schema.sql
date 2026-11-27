@@ -1,5 +1,7 @@
 -- Пересоздаём таблицы с нуля (удобно на время разработки).
--- Порядок DROP: сначала те, кто ссылается на других
+-- Порядок DROP: сначала те, кто ссылается на других.
+-- Здесь — схема v1.0.0; всё, что добавлено позже, создают миграции db/migrations (их применяет db:init)
+DROP TABLE IF EXISTS order_items;
 DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS products;
 DROP TABLE IF EXISTS users;

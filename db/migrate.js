@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import { pool } from './pool.js';
+import { applyMigrations } from './migrations.js';
 
 // Миграция НЕ удаляет данные: создаёт только то, чего ещё нет.
 // Её можно запускать сколько угодно раз — результат один и тот же.
@@ -44,6 +45,9 @@ async function migrate() {
   for (const sql of statements) {
     await pool.query(sql);
   }
+  // Изменения схемы после v1.0.0 — файлы db/migrations (ЛР13). На Render это выполняется
+  // при каждом запуске (Start: npm run db:migrate && npm start), до того как новый код примет запросы
+  const files = await applyMigrations(pool);
 
   // Администратор: создаём, только если заданы данные и его ещё нет
   const { ADMIN_EMAIL, ADMIN_PASSWORD } = process.env;
@@ -56,7 +60,7 @@ async function migrate() {
       [ADMIN_EMAIL.toLowerCase(), hash]
     );
   }
-  console.log(`Миграция выполнена (инструкций: ${statements.length})`);
+  console.log(`Миграция выполнена (инструкций: ${statements.length}, файлов миграций: ${files.length})`);
 }
 
 migrate()

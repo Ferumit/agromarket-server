@@ -5,7 +5,21 @@ import { idParam, validate } from '../middleware/validate.js';
 import { productSchema, productUpdateSchema } from '../validation/schemas.js';
 
 const router = Router();
-const adminOnly = [requireAuth, requireRole('admin')]; // цепочка из двух middleware
+// Товары меняют администратор и фермеры (ЛР13); цепочка из двух middleware
+const managers = [requireAuth, requireRole('admin', 'farmer')];
+
+// Фермер меняет только свои товары, администратор — любые.
+// Товар публичный, поэтому на чужой честно отвечаем 403, а не прячем его за 404
+async function ownProduct(req, res, next) {
+  const { rows } = await pool.query('SELECT farmer_id FROM products WHERE id = $1', [req.params.id]);
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Товар не найден' });
+  }
+  if (req.user.role === 'farmer' && rows[0].farmer_id !== req.user.id) {
+    return res.status(403).json({ error: 'Можно менять только свои товары' });
+  }
+  next();
+}
 
 // Бонус: сортировка. Имя столбца нельзя передать через $1 — параметрами передаются
 // только значения, поэтому в SQL попадает только строка из этого «белого списка»
@@ -48,28 +62,30 @@ router.get('/:id', idParam, async (req, res) => {
   res.json(rows[0]);
 });
 
-// POST /api/products — новый товар (только admin).
-// Порядок: сначала кто ты (401/403), потом что прислал (400) — чужим не рассказываем о схеме
-router.post('/', adminOnly, validate(productSchema), async (req, res) => {
-  const { name, category, price, unit, image } = req.body;
+// POST /api/products — новый товар (admin или farmer).
+// Порядок: сначала кто ты (401/403), потом что прислал (400) — чужим не рассказываем о схеме.
+// Владельца берём из токена, а не из тела: farmer_id в схеме нет (mass assignment)
+router.post('/', managers, validate(productSchema), async (req, res) => {
+  const { name, category, price, unit, image, stock } = req.body;
   const { rows } = await pool.query(
-    `INSERT INTO products (name, category, price, unit, image)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO products (name, category, price, unit, image, stock, farmer_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [name, category, price, unit ?? 'кг', image ?? null]
+    [name, category, price, unit ?? 'кг', image ?? null, stock ?? 0,
+      req.user.role === 'farmer' ? req.user.id : null]
   );
   res.status(201).json(rows[0]); // вернули созданный товар вместе с новым id
 });
 
-// PUT /api/products/5 — заменить товар целиком (только admin)
-router.put('/:id', adminOnly, idParam, validate(productSchema), async (req, res) => {
-  const { name, category, price, unit, image } = req.body;
+// PUT /api/products/5 — заменить товар целиком (admin или фермер-владелец)
+router.put('/:id', managers, idParam, validate(productSchema), ownProduct, async (req, res) => {
+  const { name, category, price, unit, image, stock } = req.body;
   const { rows } = await pool.query(
     `UPDATE products
-     SET name = $1, category = $2, price = $3, unit = $4, image = $5
-     WHERE id = $6
+     SET name = $1, category = $2, price = $3, unit = $4, image = $5, stock = COALESCE($6, stock)
+     WHERE id = $7
      RETURNING *`,
-    [name, category, price, unit ?? 'кг', image ?? null, req.params.id]
+    [name, category, price, unit ?? 'кг', image ?? null, stock ?? null, req.params.id]
   );
   if (rows.length === 0) {
     return res.status(404).json({ error: 'Товар не найден' });
@@ -77,8 +93,9 @@ router.put('/:id', adminOnly, idParam, validate(productSchema), async (req, res)
   res.json(rows[0]);
 });
 
-// PATCH /api/products/5 — изменить только присланные поля (ЛР11, только admin): { "price": 3900 }
-router.patch('/:id', adminOnly, idParam, validate(productUpdateSchema), async (req, res) => {
+// PATCH /api/products/5 — изменить только присланные поля (ЛР11; admin или фермер-владелец):
+// { "price": 3900 }, { "stock": 15 }
+router.patch('/:id', managers, idParam, validate(productUpdateSchema), ownProduct, async (req, res) => {
   // Имена столбцов — ключи, которые пропустила схема (белый список полей),
   // значения передаются параметрами $1, $2 … — SQL-инъекции здесь нет
   const fields = Object.keys(req.body);
@@ -93,14 +110,17 @@ router.patch('/:id', adminOnly, idParam, validate(productUpdateSchema), async (r
   res.json(rows[0]);
 });
 
-// DELETE /api/products/5 (только admin)
-router.delete('/:id', adminOnly, idParam, async (req, res) => {
-  const { rowCount } = await pool.query(
-    'DELETE FROM products WHERE id = $1',
-    [req.params.id]
-  );
-  if (rowCount === 0) {
-    return res.status(404).json({ error: 'Товар не найден' });
+// DELETE /api/products/5 (admin или фермер-владелец)
+router.delete('/:id', managers, idParam, ownProduct, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM products WHERE id = $1', [req.params.id]);
+  } catch (err) {
+    // 23503: на товар ссылаются позиции заказов (order_items). Удалить его — значит испортить
+    // историю заказов, поэтому база не даёт. Такой товар можно снять с продажи: stock = 0
+    if (err.code === '23503') {
+      return res.status(409).json({ error: 'По товару есть заказы — удалить нельзя. Поставьте остаток 0' });
+    }
+    throw err;
   }
   res.status(204).end(); // успешно, но тела ответа нет
 });
